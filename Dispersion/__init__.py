@@ -1,7 +1,7 @@
-from .PPLNDispersion import PPLNgayer2008
-from .CrystalDispersion import Speeds
-from .CrystalDispersion import CrystalDispersion
-from .CrystalDispersion import Mode
-from .CrystalDispersion import OpoPol
-from .OPOSetup import OpoSetup
-from .PPKTPDispersion import PPKTPMisiaszek
+from .crystaldispersion import Speeds, CrystalDispersion, Mode, OpoPol
+from .oposetup import OpoSetup
+from .ppktpdispersion import PPKTPMisiaszek
+from .pplndispersion import PPLNgayer2008
+
+__author__ = 'Andrzej Gajewski'
+__all__ = [PPKTPMisiaszek, PPLNgayer2008, Speeds, Mode, OpoPol]  # list public objects
