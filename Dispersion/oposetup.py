@@ -1,10 +1,45 @@
 import numpy as np
 from enum import Enum
+from typing import NamedTuple
 
 
 class Speeds(Enum):
     SLOW = 0
     FAST = 1
+
+
+class RangeLimits(NamedTuple):
+    max: float
+    min: float
+
+
+class BeamParams(NamedTuple):
+    wavelength: float
+    theta: float
+    phi: float
+
+
+class OpoSpeeds(NamedTuple):
+    pump: Speeds
+    idler: Speeds
+    signal: Speeds
+
+
+class SHGspeeds(NamedTuple):
+    pump: Speeds
+    shg: Speeds
+
+
+class OpoPol(Enum):
+    HOMO = 0
+    HETERO = 1
+
+
+class Mode(Enum):
+    TEMPERATURE = 1
+    WAVELENGTH = 2
+    CRYSTAL_PERIOD = 3
+    TEMP_AND_PERIOD = 4
 
 
 class Sign(Enum):
@@ -14,27 +49,27 @@ class Sign(Enum):
 
 class OpoSetup:
 
-    def __init__(self, issuccess: bool, delta_k: float, lam_pump: float, lam_signal: float, lam_idler: float,
-                 theta_pump: float, phi_pump: float, temperature: float, crystal_period: float,
-                 pseudo_vector_sign: Sign, pol_pump: Speeds, pol_idler: Speeds, pol_signal: Speeds, theta_signal: float,
-                 theta_idler: float) -> None:
+    def __init__(self, issuccess: bool, delta_k: float, pump_beam: BeamParams, signal_beam: BeamParams,
+                 idler_beam: BeamParams, temperature: float, crystal_period: float, pseudo_vector_sign: Sign,
+                 pol_pump: Speeds, pol_idler: Speeds, pol_signal: Speeds) -> None:
         self._issuccess = issuccess
         self._delta_k = delta_k
-        self._lam_pump = lam_pump
-        self._lam_signal = lam_signal
-        self._lam_idler = lam_idler
-        self._theta_pump = theta_pump
-        self._lam_signal = phi_pump
+        self._lam_pump = pump_beam.wavelength
+        self._lam_signal = signal_beam.wavelength
+        self._lam_idler = idler_beam.wavelength
+        self._theta_pump = pump_beam.theta
+        self._phi_pump = pump_beam.phi
         self._temperature = temperature
-        self._lam_signal = crystal_period
+        self._crystal_period = crystal_period
         self._pseudo_vector_sign = pseudo_vector_sign
         self._pol_pump = pol_pump
         self._pol_idler = pol_idler
         self._pol_signal = pol_signal
-        self._theta_signal = theta_signal
-        self._theta_idler = theta_idler
-        self._dir_pump = np.array([np.sin(theta_pump) * np.cos(phi_pump), np.sin(theta_pump) * np.sin(phi_pump),
-                                   np.cos(theta_pump)])
+        self._theta_signal = signal_beam.theta
+        self._theta_idler = idler_beam.theta
+        self._dir_pump = np.array([np.sin(pump_beam.theta) * np.cos(pump_beam.phi),
+                                   np.sin(pump_beam.theta) * np.sin(pump_beam.phi),
+                                   np.cos(pump_beam.theta)])
 
     @property
     def delta_k(self) -> float:
@@ -58,7 +93,7 @@ class OpoSetup:
 
     @property
     def phi_pump(self) -> float:
-        return self._lam_signal
+        return self._phi_pump
 
     @property
     def temperature(self) -> float:
@@ -66,7 +101,7 @@ class OpoSetup:
 
     @property
     def crystal_period(self) -> float:
-        return self._lam_signal
+        return self._crystal_period
 
     @property
     def sign(self) -> Sign:

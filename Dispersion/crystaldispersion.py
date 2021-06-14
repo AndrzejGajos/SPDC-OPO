@@ -1,10 +1,10 @@
 from abc import ABCMeta, abstractmethod
 from numpy import cos, sin
 import numpy as np
-from enum import Enum
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve, minimize, minimize_scalar
-from .oposetup import OpoSetup, Speeds, Sign
+from .oposetup import OpoSetup, Speeds, Sign, RangeLimits, BeamParams, SHGspeeds, Mode, OpoPol
+from itertools import product
 
 ROOM_TEMP = 25
 C_CONST = 3 * 10 ** 14
@@ -16,18 +16,6 @@ class ResultIsNaNError(Exception):
 
 class WaveVectorMismatchTooBig(Exception):
     def __init__(self, mismatch: float): super().__init__('Wavevector mismatch (' + str(mismatch) + ') is too large.')
-
-
-class OpoPol(Enum):
-    HOMO = 0
-    HETERO = 1
-
-
-class Mode(Enum):
-    TEMPERATURE = 1
-    WAVELENGTH = 2
-    CRYSTAL_PERIOD = 3
-    TEMP_AND_PERIOD = 4
 
 
 class CrystalDispersion(metaclass=ABCMeta):
@@ -59,38 +47,44 @@ class CrystalDispersion(metaclass=ABCMeta):
             vec = 2 * np.pi / (self._crystal_period * self.expansion(temperature)) * self._pp_vec * self._pp_sign.value
         return vec
 
+    @classmethod
     @abstractmethod
-    def nx(self, wavelength: float, temperature: float) -> float:
+    def nx(cls, wavelength: float, temperature: float) -> float:
         """returns  ref. index for x polarised wave"""
 
+    @classmethod
     @abstractmethod
-    def ny(self, wavelength: float, temperature: float) -> float:
+    def ny(cls, wavelength: float, temperature: float) -> float:
         """returns  ref. index for y polarised wave"""
 
+    @classmethod
     @abstractmethod
-    def nz(self, wavelength: float, temperature: float) -> float:
+    def nz(cls, wavelength: float, temperature: float) -> float:
         """returns  ref. index for z polarised wave"""
 
-    def plot_ref_indexs(self, lambda_lim: list, temperature: float, temperature_lim: list, wavelength: float,
-                        stepnum=None) -> None:
-        if stepnum is not None:
-            stepnum = self._STEP_NUM
-        dellam = (lambda_lim[1] - lambda_lim[0]) / stepnum
-        lam = np.arange(lambda_lim[0], lambda_lim[1], dellam)
-        del_temp = (temperature_lim[1] - temperature_lim[0]) / stepnum
-        temperatures = np.arange(temperature_lim[0], temperature_lim[1], del_temp)
-        plt.subplot(121)
-        plt.plot(self.nx(lam, temperature))
-        plt.plot(self.ny(lam, temperature))
-        plt.plot(self.nz(lam, temperature))
-        plt.xlabel('Wavelength [um]')
-        plt.ylabel('Ref. index')
-        plt.subplot(122)
-        plt.plot(self.nx(wavelength, temperatures))
-        plt.plot(self.ny(wavelength, temperatures))
-        plt.plot(self.nz(wavelength, temperatures))
-        plt.xlabel('Temperature [C]')
-        plt.ylabel('Ref. index')
+    @classmethod
+    def plot_ref_indexs(cls, wavelength: RangeLimits, temperature0: float, temperature: RangeLimits, wavelength0: float,
+                        yaxis: RangeLimits = None, stepnum=None) -> None:
+        if stepnum is None:
+            stepnum = cls._STEP_NUM
+        del_lam = (wavelength.max - wavelength.min) / stepnum
+        wavelength_array = np.arange(wavelength.min, wavelength.max, del_lam)
+        del_temp = (temperature.max - temperature.min) / stepnum
+        temperature_array = np.arange(temperature.min, temperature.max, del_temp)
+        fig, (ax1, ax2) = plt.subplots(1, 2, constrained_layout=True, sharey=True)
+        if yaxis is not None:
+            ax1.set_ylim(yaxis.min, yaxis.max)
+        ax1.set_xlim(wavelength.min, wavelength.max)
+        ax1.plot(wavelength_array, cls.nx(wavelength_array, temperature0))
+        ax1.plot(wavelength_array, cls.ny(wavelength_array, temperature0))
+        ax1.plot(wavelength_array, cls.nz(wavelength_array, temperature0))
+        ax1.set_xlabel('Wavelength [um]')
+        ax1.set_ylabel('Ref. index')
+        ax2.plot(temperature_array, cls.nx(wavelength0, temperature_array))
+        ax2.plot(temperature_array, cls.ny(wavelength0, temperature_array))
+        ax2.plot(temperature_array, cls.nz(wavelength0, temperature_array))
+        ax2.set_xlabel('Temperature [C]')
+        ax2.set_ylabel('Ref. index')
         plt.show()
 
     @staticmethod
@@ -110,66 +104,76 @@ class CrystalDispersion(metaclass=ABCMeta):
                 1 / nx ** 2 + 1 / ny ** 2)
         c = sx ** 2 * (1 / ny ** 2 * 1 / nz ** 2) + sy ** 2 * (1 / nx ** 2 * 1 / nz ** 2) + sz ** 2 * (
                 1 / nx ** 2 * 1 / ny ** 2)
-        if speed == Speeds(0):
+        if speed == Speeds.SLOW:
             return (abs(2 / (b - (b ** 2 - 4 * c) ** 0.5))) ** 0.5
-        elif speed == Speeds(1):
+        elif speed == Speeds.FAST:
             return (abs(2 / (b + (b ** 2 - 4 * c) ** 0.5))) ** 0.5
         else:
             raise TypeError('Not a speed')
 
-    def _ref_indx(self, speed: Speeds, theta_pump: float, phi_ump: float, lam: float,
-                  theta: float, phi: float, temperature: float) -> float:
-        s = np.dot(self._trans(theta_pump, phi_ump), self._dir(theta, phi))
-        n = [self.nx(lam, temperature), self.ny(lam, temperature), self.nz(lam, temperature)]
+    def _ref_indx(self, speed: Speeds, theta_pump: float, phi_pump: float, beam: BeamParams,
+                  temperature: float) -> float:
+        lam = beam.wavelength
+        theta = beam.theta
+        phi = beam.phi
+        s = np.dot(self._trans(theta_pump, phi_pump), self._dir(theta, phi))
+        n = np.array([self.nx(lam, temperature), self.ny(lam, temperature), self.nz(lam, temperature)])
         return self._eff_ref_indx(speed, s, n)
 
-    def _ref_indx_pump(self, speed: Speeds, lam: float, theta: float, phi: float, temperature: float) -> float:
-        return self._ref_indx(speed, 0, 0, lam, theta, phi, temperature)
+    # def _ref_indx_pump(self, speed: Speeds, pump_beam: BeamParams, temperature: float) -> float:
+    #     return self._ref_indx(speed, 0, 0, pump_beam, temperature)
 
-    def kvec(self, speed: Speeds, lam: float, theta_pump: float, phi_pump: float, theta: float,
-             phi: float, temperature: float) -> np.array:
+    def kvec(self, speed: Speeds, beam: BeamParams, theta_pump: float, phi_pump: float, temperature: float) -> np.array:
+        lam = beam.wavelength
+        theta = beam.theta
+        phi = beam.phi
         k0 = 2 * np.pi / lam
-        n = self._ref_indx(speed, theta_pump, phi_pump, lam, theta, phi, temperature)
+        n = self._ref_indx(speed, theta_pump, phi_pump, beam, temperature)
         return n * k0 * np.dot(self._trans(theta_pump, phi_pump), self._dir(theta, phi))
 
-    def kpvec(self, speed: Speeds, lam: float, theta_pump: float, phi_pump: float, temperature: float) -> np.array:
-        return self.kvec(speed, lam, 0, 0, theta_pump, phi_pump, temperature)
+    def kpvec(self, speed: Speeds, pump: BeamParams, temperature: float) -> np.array:
+        beam = BeamParams(pump.wavelength, 0, 0)
+        theta_pump = pump.theta
+        phi_pump = pump.phi
+        return self.kvec(speed, beam, theta_pump, phi_pump, temperature)
 
     ####################################################################################################################
     #                                                   SHG METHODS
     ####################################################################################################################
 
-    def _shg_deltak(self, speeds: Speeds, lam_pump: float, theta_pump: float,
-                    phi_pump: float, temperature: float) -> float:
+    def _shg_deltak(self, speeds: SHGspeeds, pump_beam: BeamParams, temperature: float) -> float:
         if self._crystal_period == 0:
             pp_vec = np.array([0, 0, 0])
         else:
             pp_vec = 2 * np.pi / (self._crystal_period * self.expansion(temperature)) \
                      * self._pp_vec * self._pp_sign.value
-        [pump_speed, shg_speed] = speeds
-        lam_shg = lam_pump / 2
-        kp = self.kpvec(pump_speed, lam_pump, theta_pump, phi_pump, temperature)
-        kout = self.kpvec(shg_speed, lam_shg, theta_pump, phi_pump, temperature)
+        pump_speed = speeds.pump
+        shg_speed = speeds.shg
+        lam_shg = pump_beam.wavelength / 2
+        shg_beam = BeamParams(lam_shg, pump_beam.theta, pump_beam.phi)
+        kp = self.kpvec(pump_speed, pump_beam, temperature)
+        kout = self.kpvec(shg_speed, shg_beam, temperature)
         return np.linalg.norm(2 * kp - kout + pp_vec)
 
-    def _plot_shg(self, mode: Mode, lam_lim: list, params: list, stepnum: int) -> plt:
+    def _plot_shg(self, mode: Mode, arguments: RangeLimits, params: list, stepnum: int) -> plt:
         const = np.array(params)
 
         def fun(lam: float, y: float) -> float:
+            pump_beam = BeamParams(lam, const[1][0], const[1][1])
             if mode == Mode.TEMPERATURE:
                 temperature = y
-                return self._shg_deltak(const[0], lam, const[1][0], const[1][1], temperature)
+                return self._shg_deltak(const[0], pump_beam, temperature)
             elif mode == Mode.CRYSTAL_PERIOD:
                 periodic_polling = y
                 temporary = self._crystal_period
                 self._crystal_period = periodic_polling
-                result = self._shg_deltak(const[0], lam, const[1][0], const[1][1], const[3])
+                result = self._shg_deltak(const[0], pump_beam, const[3])
                 self._crystal_period = temporary
                 return result
             else:
                 return np.nan
 
-        def shg(x: float, centarg: float) -> float:
+        def shg(x: np.array, centarg: np.array) -> float:
             sol = fsolve(fun, centarg, x, full_output=True)
             if sol[2] == 1:
                 return sol[0][0]
@@ -177,33 +181,30 @@ class CrystalDispersion(metaclass=ABCMeta):
                 return np.nan
 
         v_shg = np.vectorize(shg)
-        delx = (lam_lim[1] - lam_lim[0]) / stepnum
-        arg = np.arange(lam_lim[0], lam_lim[1], delx)
+        delx = (arguments.max - arguments.min) / stepnum
+        arg = np.arange(arguments.min, arguments.max, delx)
         plt.plot(arg, v_shg(arg, const[2]))
         return plt
 
-    def plot_temp_shg(self, speeds: Speeds, temp_max: float, temp_min: float, theta_pump: float,
-                      phi_pump: float, stepnum=None) -> plt:  # untested
-        lim = [temp_max, temp_min]
-        starting_lam = 1.1
+    def plot_temp_shg(self, speeds: SHGspeeds, temperatures: RangeLimits, theta_pump: float, phi_pump: float,
+                      starting_lam=1.1, stepnum=None) -> plt:  # untested
         params = [speeds, [theta_pump, phi_pump], starting_lam]
-        if stepnum is not None:
+        if stepnum is None:
             stepnum = self._STEP_NUM
-        plot = self._plot_shg(Mode.TEMPERATURE, lim, params, stepnum)
+        plot = self._plot_shg(Mode.TEMPERATURE, temperatures, params, stepnum)
         plot.ylabel('SHG wavelength [' + '\u03BC' + 'm]')
         plot.xlabel('Temperature [C]')
         plot.suptitle('Dependence of SHG on temperature')
         plot.show()
         return plot
 
-    def plot_ppol_shg(self, speeds: Speeds, pp_max: float, pp_min: float, theta_pump: float, phi_pump: float,
+    def plot_ppol_shg(self, speeds: SHGspeeds, poling: RangeLimits, theta_pump: float, phi_pump: float,
                       temperature=ROOM_TEMP, stepnum=None) -> plt:  # untested
-        lim = [pp_max, pp_min]
         starting_lam = 1.1
         params = [speeds, [theta_pump, phi_pump], starting_lam, temperature]
-        if stepnum is not None:
+        if stepnum is None:
             stepnum = self._STEP_NUM
-        plot = self._plot_shg(Mode.CRYSTAL_PERIOD, lim, params, stepnum)
+        plot = self._plot_shg(Mode.CRYSTAL_PERIOD, poling, params, stepnum)
         plot.ylabel('SHG wavelength [' + '\u03BC' + 'm]')
         plot.xlabel('Periodic polling [' + '\u03BC' + 'm]')
         plot.suptitle('Dependence of SHG on periodic polling')
@@ -214,59 +215,58 @@ class CrystalDispersion(metaclass=ABCMeta):
     #                                                   OPO METHODS: General methods
     ####################################################################################################################
 
-    def _theta_idler(self, pump_speed: Speeds, lam_pump: float, theta_pump: float, phi_pump: float,
-                     signal_speed: Speeds, lam_signal: float, theta_signal: float, phi_signal: float,
+    def _theta_idler(self, pump_speed: Speeds, pump_beam: BeamParams, signal_speed: Speeds, signal_beam: BeamParams,
                      temperature: float) -> float:  # unsure about abs #not tested
         if self._crystal_period == 0:
             pp_vec = 0
         else:
             pp_vec = 2 * np.pi / (self._crystal_period * self.expansion(temperature)) * self._pp_sign.value
-        propdir = self._dir(theta_pump, phi_pump)
-        nsignal = self._ref_indx(signal_speed, theta_pump, phi_pump, lam_signal, theta_signal, phi_signal, temperature)
-        kp = np.linalg.norm(self.kpvec(pump_speed, lam_pump, theta_pump, phi_pump, temperature))
+        propdir = self._dir(pump_beam.theta, pump_beam.phi)
+        nsignal = self._ref_indx(signal_speed, pump_beam.theta, pump_beam.phi, signal_beam, temperature)
+        kp = np.linalg.norm(self.kpvec(pump_speed, pump_beam, temperature))
         k_parallel = np.dot(self._pp_vec, propdir) * pp_vec
-        ks = nsignal * 2 * np.pi / lam_signal
-        ks_perpendicular = ks * sin(theta_signal)
-        ks_parallel = ks * cos(theta_signal)
+        ks = nsignal * 2 * np.pi / signal_beam.wavelength
+        ks_perpendicular = ks * sin(signal_beam.theta)
+        ks_parallel = ks * cos(signal_beam.theta)
         return np.arcsin(ks_perpendicular / ((kp - ks_parallel + k_parallel) ** 2 + ks_perpendicular ** 2) ** 0.5)
 
-    def deltak0vec(self, speeds: Speeds, lam_pump: float, theta_pump: float, phi_pump: float, lam_signal: float, theta_signal: float, phi_signal: float, temperature: float) -> np.array:
+    def deltak0vec(self, speeds: Speeds, pump_beam: BeamParams, signal_beam: BeamParams,
+                   temperature: float) -> np.array:
         if self._crystal_period == 0:
             pp_vec = np.array([0, 0, 0])
         else:
-            pp_vec = 2 * np.pi / (self._crystal_period * self.expansion(temperature)) * self._pp_vec * self._pp_sign.value
+            pp_vec = 2 * np.pi / (
+                    self._crystal_period * self.expansion(temperature)) * self._pp_vec * self._pp_sign.value
         [pump_speed, signal_speed, idler_speed] = speeds
-        lam_idler = 1 / (1 / lam_pump - 1 / lam_signal)
-        theta_idler = self._theta_idler(pump_speed, lam_pump, theta_pump, phi_pump, signal_speed, lam_signal,
-                                        theta_signal,
-                                        phi_signal, temperature)
-        kp = self.kpvec(pump_speed, lam_pump, theta_pump, phi_pump, temperature)
-        ks = self.kvec(signal_speed, lam_signal, theta_pump, phi_pump, theta_signal, phi_signal, temperature)
-        ki = self.kvec(idler_speed, lam_idler, theta_pump, phi_pump, theta_idler, phi_signal + np.pi, temperature)
-        return kp - ks - ki + np.dot(pp_vec, self._dir(theta_pump, phi_pump)) * self._dir(theta_pump, phi_pump)
+        lam_idler = 1 / (1 / pump_beam.wavelength - 1 / signal_beam.wavelength)
+        theta_idler = self._theta_idler(pump_speed, pump_beam, signal_speed, signal_beam, temperature)
+        idler_beam = BeamParams(wavelength=lam_idler, theta=theta_idler, phi=signal_beam.phi + np.pi)
+        kp = self.kpvec(pump_speed, pump_beam, temperature)
+        ks = self.kvec(signal_speed, signal_beam, pump_beam.theta, pump_beam.phi, temperature)
+        ki = self.kvec(idler_speed, idler_beam, pump_beam.theta, pump_beam.phi, temperature)
+        vec = np.dot(pp_vec, self._dir(pump_beam.theta, pump_beam.phi)) * self._dir(pump_beam.theta, pump_beam.phi)
+        return kp - ks - ki + vec
 
-    def _find_signal_beam(self, speedlist: np.array, lam_pump: float, theta_pump: float, phi_pump: float, temperature: float, lam_signal0=1.5, angSignal0=1e-6) -> np.array:
-        phi_signal = 0
+    def _find_signal_beam(self, speedlist: np.array, pump_beam: BeamParams, temperature: float, lam_signal0=1.5,
+                          ang_signal0=1e-6) -> np.array:
 
         def find_signal(x):
-            lam_sig = x[0]
-            theta_sig = x[1]
-            return np.linalg.norm(self.deltak0vec(speedlist, lam_pump, theta_pump, phi_pump, lam_sig, theta_sig,
-                                                  phi_signal, temperature))
+            signal = BeamParams(wavelength=x[0], theta=x[1], phi=0)
+            dk0 = self.deltak0vec(speedlist, pump_beam, signal, temperature)
+            return np.linalg.norm(dk0)
 
-        sol = minimize(find_signal, np.array([lam_signal0, angSignal0]),
-                       bounds=((lam_pump + self._DEL_LAMBDA, lam_pump * 2),
+        sol = minimize(find_signal, np.array([lam_signal0, ang_signal0]),
+                       bounds=((pump_beam.wavelength + self._DEL_LAMBDA, pump_beam.wavelength * 2),
                                (0, self._MAX_ANGLE)))
         if np.isnan(sol.fun):
             raise ResultIsNaNError()
         elif sol.fun > self._MAX_WAVE_MISMATCH:
             raise WaveVectorMismatchTooBig(sol.fun)
-        lam_signal = sol.x[0]
-        theta_signal = sol.x[1]
         deltak = sol.fun
-        return np.array([lam_signal, theta_signal, deltak, sol.success])
+        signal_beam = BeamParams(wavelength=sol.x[0], theta=sol.x[1], phi=0)
+        return np.array([signal_beam, deltak, sol.success])
 
-    def _plot_opo(self, mode: Mode, lim: list, params: list, stepnum: int) -> None:
+    def _plot_opo(self, mode: Mode, lim: RangeLimits, params: list, stepnum: int) -> list:
         const = np.array(params)
 
         def opo(x):
@@ -274,57 +274,45 @@ class CrystalDispersion(metaclass=ABCMeta):
                 if mode == Mode.TEMPERATURE:
                     temperature = x
                     speeds = const[0]
-                    lam_pump = const[1]
-                    theta_pump = const[2]
-                    phi_pump = const[3]
-                    [lam_sig, theta_sig, delk] = self._find_signal_beam(speeds, lam_pump, theta_pump, phi_pump,
-                                                                                temperature)[[0, 1, 2]]
-                    theta_idl = self._theta_idler(speeds[0], lam_pump, theta_pump, phi_pump, speeds[1], lam_sig,
-                                                    theta_sig, 0, temperature)
-                    return np.array([lam_sig, theta_sig, theta_idl, delk])
+                    pump_beam = BeamParams(wavelength=const[1], theta=const[2], phi=const[3])
+                    [signal_beam, delk, _] = self._find_signal_beam(speeds, pump_beam, temperature)[[0, 1, 2]]
+                    theta_idl = self._theta_idler(speeds[0], pump_beam, speeds[1], signal_beam, temperature)
+                    return np.array([signal_beam.wavelength, signal_beam.theta, signal_beam.phi, theta_idl, delk])
                 elif mode == Mode.WAVELENGTH:
-                    lam_pump = x
                     speeds = const[0]
-                    theta_pump = const[1]
-                    phi_pump = const[2]
                     temperature = const[3]
-                    [lam_sig, theta_sig, delk] = self._find_signal_beam(speeds, lam_pump, theta_pump, phi_pump,
-                                                                                temperature)[[0, 1, 2]]
-                    theta_idl = self._theta_idler(speeds[0], lam_pump, theta_pump, phi_pump, speeds[1], lam_sig,
-                                                    theta_sig, 0, temperature)
-                    return np.array([lam_sig, theta_sig, theta_idl, delk])
+                    pump_beam = BeamParams(wavelength=x, theta=const[1], phi=const[2])
+                    [signal_beam, delk, _] = self._find_signal_beam(speeds, pump_beam, temperature)[[0, 1, 2]]
+                    theta_idl = self._theta_idler(speeds[0], pump_beam, speeds[1], signal_beam, temperature)
+                    return np.array([signal_beam.wavelength, signal_beam.theta, signal_beam.phi, theta_idl, delk])
                 elif mode == Mode.CRYSTAL_PERIOD:
                     period = x
                     self.Temp = self._crystal_period
                     self._crystal_period = period
                     speeds = const[0]
-                    lam_pump = const[1]
-                    theta_pump = const[2]
-                    phi_pump = const[3]
                     temperature = const[4]
-                    [lam_sig, theta_sig, delk] = self._find_signal_beam(speeds, lam_pump, theta_pump, phi_pump,
-                                                                                temperature)[[0, 1, 2]]
-                    theta_idl = self._theta_idler(speeds[0], lam_pump, theta_pump, phi_pump, speeds[1], lam_signal,
-                                                    theta_sig, 0, temperature)
+                    pump_beam = BeamParams(wavelength=const[1], theta=const[2], phi=const[3])
+                    [signal_beam, delk, _] = self._find_signal_beam(speeds, pump_beam, temperature)[[0, 1, 2]]
+                    theta_idl = self._theta_idler(speeds[0], pump_beam, speeds[1], signal_beam, temperature)
                     self._crystal_period = self.Temp
                     self.Temp = 0
-                    return np.array([lam_sig, theta_sig, theta_idl, delk])
+                    return np.array([signal_beam.wavelength, signal_beam.theta, signal_beam.phi, theta_idl, delk])
                 else:
                     return None
             except Exception as exc:
                 print(exc)
-                return np.array([np.nan, np.nan, np.nan, np.nan])
+                return np.array([np.nan, np.nan, np.nan, np.nan, np.nan])
 
         vopo = np.vectorize(opo, otypes=[np.ndarray])
-        delx = (lim[1] - lim[0]) / stepnum
-        arg = np.arange(lim[0], lim[1], delx)
+        delx = (lim.max - lim.min) / stepnum
+        arg = np.arange(lim.min, lim.max, delx)
         result = np.vstack(vopo(arg))
         [lam_signal, theta_signal, theta_idler, deltak] = [result[:, 0], result[:, 1], result[:, 2], result[:, 3]]
         if mode != Mode.WAVELENGTH:
             lam_idler = 1 / (1 / const[1] - 1 / lam_signal)
         else:
             lam_idler = 1 / (1 / arg - 1 / lam_signal)
-        fig, (ax1, ax2, ax3) = plt.subplots(3)
+        [fig, (ax1, ax2, ax3)] = plt.subplots(3)
         ax1.plot(arg, lam_signal)
         ax1.plot(arg, lam_idler)
         ax1.set(ylabel='Wavelength [' + '\u03BC' + 'm]')
@@ -333,97 +321,92 @@ class CrystalDispersion(metaclass=ABCMeta):
         ax2.set(ylabel='Opening angle [rad]')
         ax3.scatter(arg, np.log10(deltak))
         ax3.set(ylabel='log($\Delta k$) [log(1/' + '\u03BC' + 'm )]')
-        #return plt
+        return [fig, (ax1, ax2, ax3)]
 
-    def plot_wave_opo(self, speeds, LamPmax, LamPmin, theta_pump, phi_pump, temperature, stepnum=None) -> None:
-        lim = [LamPmax, LamPmin]
+    def plot_wave_opo(self, speeds: list, pump: RangeLimits, theta_pump: float, phi_pump: float,
+                      temperature: float, stepnum=None) -> None:
         params = [speeds, theta_pump, phi_pump, temperature]
-        if stepnum is not None:
+        if stepnum is None:
             stepnum = self._STEP_NUM
-        self._plot_opo(Mode.WAVELENGTH, lim, params, stepnum)
+        self._plot_opo(Mode.WAVELENGTH, pump, params, stepnum)
         plt.ylabel('Wavelength [' + '\u03BC' + 'm]')
         plt.xlabel('Pump wavelength [' + '\u03BC' + 'm]')
         plt.suptitle('Dependence of OPO wavelengths on pumping wavelength')
         plt.show()
-        #return plot
+        # return plot
 
-    def plotTempOPO(self, speeds, Tmax, Tmin, lam_pump, theta_pump, phi_pump, stepnum=None) -> None:
-        lim = [Tmax, Tmin]
+    def plot_temp_opo(self, speeds: list, temperature: RangeLimits, lam_pump: float, theta_pump: float,
+                      phi_pump: float, stepnum=None) -> None:
         params = [speeds, lam_pump, theta_pump, phi_pump]
-        if stepnum is not None:
+        if stepnum is None:
             stepnum = self._STEP_NUM
-        self._plot_opo(Mode.TEMPERATURE, lim, params, stepnum)
-        plt.xlabel('Temperature [C]')
-        plt.suptitle('Dependence of OPO on temperature')
+        [fig, (ax1, ax2, ax3)] = self._plot_opo(Mode.TEMPERATURE, temperature, params, stepnum)
+        ax1.set(xlabel='Temperature [C]')
+        fig.suptitle('Dependence of OPO on temperature')
         plt.show()
-        #return plot
+        # return plot
 
-    def plotTemp(self, setup: OpoSetup, Tmax, Tmin, stepnum=None) -> None:
+    def plot_temperature(self, setup: OpoSetup, temperature: RangeLimits, stepnum=None) -> None:
         speeds = [setup.pol_pump, setup.pol_signal, setup.pol_idler]
         lam_pump = setup.lam_pump
         theta_pump = setup.theta_pump
         phi_pump = setup.phi_pump
-        return self.plotTempOPO(speeds, Tmax, Tmin, lam_pump, theta_pump, phi_pump, stepnum)
+        self.plot_temp_opo(speeds, temperature, lam_pump, theta_pump, phi_pump, stepnum)
 
-    def plotPPolOPO(self, speeds, PPmax, PPmin, lam_pump, theta_pump, phi_pump, T, stepnum=None) -> None:
-        lim = [PPmax, PPmin]
-        params = [speeds, lam_pump, theta_pump, phi_pump, T]
-        if stepnum is not None:
+    def plot_periodicpol_opo(self, speeds: list, period: RangeLimits, lam_pump: float,
+                             theta_pump: float, phi_pump: float, temperature: float, stepnum=None) -> None:
+        params = [speeds, lam_pump, theta_pump, phi_pump, temperature]
+        if stepnum is None:
             stepnum = self._STEP_NUM
-        self._plot_opo(Mode.CRYSTAL_PERIOD, lim, params, stepnum)
+        self._plot_opo(Mode.CRYSTAL_PERIOD, period, params, stepnum)
         plt.ylabel('Wavelength [' + '\u03BC' + 'm]')
         plt.xlabel('Periodic polling [' + '\u03BC' + 'm]')
         plt.suptitle('Dependence of OPO wavelengths on periodic polling')
         plt.show()
-        #return plot
+        # return plot
 
     ####################################################################################################################
     #                       OPO METHODS: Find OPO for crystal with arbitrary T but with set PP and pumping wavelength
     ####################################################################################################################
 
-    def findOPO(self, lam_pump, T, quiet=True, LookAlongPolling=True):
+    def find_opo(self, lam_pump: float, temperature: float, quiet=True, look_along_polling=True):
         print('findOPO: starting search...')
         setups = []
         theta = np.arccos(self._pp_vec[2])
         phi = np.arccos(self._pp_vec[0] / sin(theta))
-        crystalDir = [theta, phi]
-        if LookAlongPolling:
-            pumpDirs = [crystalDir]
+        crystal_dir = [theta, phi]
+        if look_along_polling:
+            pump_dirs = [crystal_dir]
         else:
-            pumpDirs = [[0, 0], [np.pi / 2, 0], [np.pi / 2, np.pi / 2]]
-        Crystalsign = self._pp_sign
-        for direction in pumpDirs:
-            [theta_pump, phi_pump] = direction
-            if direction == crystalDir:
+            pump_dirs = [[0, 0], [np.pi / 2, 0], [np.pi / 2, np.pi / 2]]
+        crystal_sign = self._pp_sign
+        for direction in pump_dirs:
+            pump_beam = BeamParams(wavelength=lam_pump, theta=direction[0], phi=direction[1])
+            if direction == crystal_dir:
                 signs = [1, -1]
             else:
                 signs = [1]
-            for pump_speed in Speeds:
-                for signal_speed in Speeds:
-                    for idlerSpeed in Speeds:
-                        speedCom = np.array([pump_speed, signal_speed, idlerSpeed])
-                        for sign in signs:
-                            self._pp_sign = sign
-                            try:
-                                [lam_signal, theta_signal, deltak, issuccess] = self._find_signal_beam(speedCom,
-                                                                                                       lam_pump,
-                                                                                                       theta_pump,
-                                                                                                       phi_pump, T)
-                                lamIdler = 1 / (1 / lam_pump - 1 / lam_signal)
-                                theta_idler = self._theta_idler(pump_speed, lam_pump, theta_pump, phi_pump,
-                                                                signal_speed,
-                                                                lam_signal, theta_signal, 0, T)
-                                instance = OpoSetup(issuccess, deltak, lam_pump, lam_signal, lamIdler, theta_pump,
-                                                    phi_pump, T, self._crystal_period, Sign.sign, pump_speed,
-                                                    idlerSpeed,
-                                                    signal_speed, theta_signal, theta_idler)
-                                instance.display()
-                                setups.append(instance)
-                            except Exception as inst:
-                                if not quiet:
-                                    print(inst.args)
+            for speeds in product(Speeds, repeat=3):
+                pump_speed = speeds[0]
+                signal_speed = speeds[1]
+                idler_speed = speeds[2]
+                speed_com = np.array([pump_speed, signal_speed, idler_speed])
+                for sign in signs:
+                    self._pp_sign = Sign(sign)
+                    try:
+                        [signal_beam, deltak, issuccess] = self._find_signal_beam(speed_com, pump_beam, temperature)
+                        lam_idler = 1 / (1 / lam_pump - 1 / signal_beam.wavelength)
+                        theta_idler = self._theta_idler(pump_speed, pump_beam, signal_speed, signal_beam, temperature)
+                        idler_beam = BeamParams(wavelength=lam_idler, theta=theta_idler, phi=np.pi)
+                        instance = OpoSetup(bool(issuccess), deltak, pump_beam, signal_beam, idler_beam, temperature,
+                                            self._crystal_period, self._pp_sign, pump_speed, idler_speed, signal_speed)
+                        instance.display()
+                        setups.append(instance)
+                    except Exception as inst:
+                        if not quiet:
+                            print(inst.args)
 
-        self._pp_sign = Crystalsign
+        self._pp_sign = crystal_sign
         print('findOPO: search finished. ' + str(len(setups)) + ' setups found. \n')
         return setups
 
@@ -431,238 +414,240 @@ class CrystalDispersion(metaclass=ABCMeta):
     #                       OPO METHODS: Find PP or T, but with set OPO and pumping direction
     ####################################################################################################################
 
-    def _findSetupParameters(self, mode, speedCom, lam_pump, theta_pump, phi_pump, lam_signal, PP0, T0, angSignal0):
-        phi_signal = 0
-        if PP0 is not None:
-            PP0 = self._crystal_period
+    def _find_setup_parameters(self, mode: Mode, speeds: np.array, pump_beam: BeamParams, lam_signal: float,
+                               pp0: float, temperature0: float, ang_signal0: float) -> np.array:
+        if pp0 is not None:
+            pp0 = self._crystal_period
         if mode == Mode.Temperature:
-            self._crystal_period = PP0
-            (X0, Xmin, Xmax) = (T0, self._MIN_TEMPERATURE, self._MAX_TEMPERATURE)
+            self._crystal_period = pp0
+            (x0, xmin, xmax) = (temperature0, self._MIN_TEMPERATURE, self._MAX_TEMPERATURE)
 
-            def findSignal(x):
-                theta_signal = x[0]
-                T = x[1]
-                return np.linalg.norm(
-                    self.deltak0vec(speedCom, lam_pump, theta_pump, phi_pump, lam_signal, theta_signal, phi_signal, T))
+            def find_signal(x):
+                _temperature = x[1]
+                signal_beam = BeamParams(wavelength=lam_signal, theta=x[0], phi=0)
+                dk0 = self.deltak0vec(speeds, pump_beam, signal_beam, _temperature)
+                return np.linalg.norm(dk0)
         elif mode == Mode.CRYSTAL_PERIOD:
-            (X0, Xmin, Xmax) = (PP0, self._MIN_PERIOD, self._MAX_PERIOD)
+            (x0, xmin, xmax) = (pp0, self._MIN_PERIOD, self._MAX_PERIOD)
 
-            def findSignal(x):
-                theta_signal = x[0]
+            def find_signal(x):
                 self._crystal_period = x[1]
-                return np.linalg.norm(
-                    self.deltak0vec(speedCom, lam_pump, theta_pump, phi_pump, lam_signal, theta_signal, phi_signal, T0))
+                signal_beam = BeamParams(wavelength=lam_signal, theta=x[0], phi=np.pi)
+                dk0 = self.deltak0vec(speeds, pump_beam, signal_beam, temperature0)
+                return np.linalg.norm(dk0)
         else:
             raise TypeError('Incorrect mode.')
-        sol = minimize(findSignal, np.array([angSignal0, X0]), bounds=((0, self._MAX_ANGLE), (Xmin, Xmax)))
+        sol = minimize(find_signal, np.array([ang_signal0, x0]), bounds=((0, self._MAX_ANGLE), (xmin, xmax)))
         if np.isnan(sol.fun):
             raise ResultIsNaNError()
         elif sol.fun > self._MAX_WAVE_MISMATCH:
             raise WaveVectorMismatchTooBig(sol.fun)
         theta_signal = sol.x[0]
-        if mode == Mode.Temperature:
-            (T, period) = (sol.x[1], self._crystal_period)
-        elif mode == Mode.CRYSTAL_PERIOD:
-            (T, period) = (T0, sol.x[1])
         deltak = sol.fun
-        return np.array([theta_signal, T, period, deltak, sol.success])
+        if mode == Mode.Temperature:
+            (temperature, period) = (sol.x[1], self._crystal_period)
+        else:
+            (temperature, period) = (temperature0, sol.x[1])
+        return np.array([theta_signal, temperature, period, deltak, sol.success])
 
-    def _findCrystalSetup(self, mode, lam_pump, lam_signal, PolMode, T0, PPguess, angSignal0, quiet, LookAlongPolling):
+    def _find_crystal_setup(self, mode: Mode, lam_pump: float, lam_signal: float, pol_mode: OpoPol, temperature0: float,
+                            pp_guess: float, ang_signal0: float, quiet: bool, look_along_polling) -> list:
         print('findCrystalSetup: starting search...')
         temp = self._crystal_period
         setups = []
         theta = np.arccos(self._pp_vec[2])
         phi = np.arccos(self._pp_vec[0] / sin(theta))
-        crystalDir = [theta, phi]
-        if LookAlongPolling:
-            pumpDirs = [crystalDir]
+        crystal_dir = [theta, phi]
+        if look_along_polling:
+            pump_dirs = [crystal_dir]
         else:
-            pumpDirs = [[0, 0], [np.pi / 2, 0], [np.pi / 2, np.pi / 2]]
-        Crystalsign = self._pp_sign
-        for direction in pumpDirs:
-            if direction == crystalDir:
+            pump_dirs = [[0, 0], [np.pi / 2, 0], [np.pi / 2, np.pi / 2]]
+        crystal_sign = self._pp_sign
+        for direction in pump_dirs:
+            if direction == crystal_dir:
                 signs = [1, -1]
             else:
                 signs = [1]
-            [theta_pump, phi_pump] = direction
-            for pump_speed in Speeds:
-                for signal_speed in Speeds:
-                    if PolMode == OpoPol.HETERO:
-                        idlerSpeed = Speeds((signal_speed.value + 1) % 2)
-                    if PolMode == OpoPol.HOMO:
-                        idlerSpeed = signal_speed
-                    speedCom = np.array([pump_speed, signal_speed, idlerSpeed])
-                    for sign in signs:
-                        self._pp_sign = sign
+            pump_beam = BeamParams(wavelength=lam_pump, theta=direction[0], phi=direction[1])
+            for speeds in product(Speeds, repeat=2):
+                pump_speed = speeds[0]
+                signal_speed = speeds[1]
+                if pol_mode == OpoPol.HETERO:
+                    idler_speed = Speeds((signal_speed.value + 1) % 2)
+                elif pol_mode == OpoPol.HOMO:
+                    idler_speed = signal_speed
+                else:
+                    raise TypeError('Incorrect polarization mode.')
+                speeds = np.array([pump_speed, signal_speed, idler_speed])
+                for sign in signs:
+                    self._pp_sign = sign
+                    self._crystal_period = temp
+                    try:
+                        parameters = self._find_setup_parameters(mode, speeds, pump_beam, lam_signal, pp_guess,
+                                                                 temperature0, ang_signal0)
+                        [theta_signal, temperature, period, deltak, issuccess] = parameters
+                        lam_idler = 1 / (1 / lam_pump - 1 / lam_signal)
+                        signal_beam = BeamParams(wavelength=lam_signal, theta=theta_signal, phi=0)
+                        theta_idler = self._theta_idler(pump_speed, pump_beam, signal_speed, signal_beam, temperature)
+                        idler_beam = BeamParams(wavelength=lam_idler, theta=theta_idler, phi=np.pi)
+                        instance = OpoSetup(issuccess, deltak, pump_beam, signal_beam, idler_beam, temperature, period,
+                                            Sign.sign, pump_speed, idler_speed, signal_speed)
+                        instance.display()
+                        setups.append(instance)
+                    except Exception as inst:
+                        if not quiet:
+                            print(inst.args)
+                    finally:
                         self._crystal_period = temp
-                        try:
-                            [theta_signal, T, period, deltak, issuccess] = self._findSetupParameters(mode, speedCom,
-                                                                                                     lam_pump,
-                                                                                                     theta_pump,
-                                                                                                     phi_pump,
-                                                                                                     lam_signal,
-                                                                                                     PPguess, T0,
-                                                                                                     angSignal0)
-                            lamIdler = 1 / (1 / lam_pump - 1 / lam_signal)
-                            theta_idler = self._theta_idler(idlerSpeed, theta_pump, phi_pump, lam_signal, theta_signal,
-                                                            0,
-                                                            T)
-                            instance = OpoSetup(issuccess, deltak, lam_pump, lam_signal, lamIdler, theta_pump, phi_pump,
-                                                T,
-                                                period, Sign.sign, pump_speed, idlerSpeed, signal_speed, theta_signal,
-                                                theta_idler)
-                            instance.disp()
-                            setups.append(instance)
-                        except Exception as inst:
-                            if not quiet:
-                                print(inst.args)
-                        finally:
-                            self._crystal_period = temp
-        self._pp_sign = Crystalsign
+        self._pp_sign = crystal_sign
         print('findCrystalSetup: search finished. ' + str(len(setups)) + ' setups found. \n')
         return setups
 
-    def findCrystalPeriod(self, lam_pump, lam_signal, PolMode, T0=ROOM_TEMP, PPguess=None, angSignal0=0.01, quiet=True,
-                          LookAlongPolling=True):
-        setups = self._findCrystalSetup(Mode.CRYSTAL_PERIOD, lam_pump, lam_signal, PolMode, T0, PPguess, angSignal0,
-                                        quiet,
-                                        LookAlongPolling)
+    def find_crystal_period(self, lam_pump: float, lam_signal: float, pol_mode: OpoPol, temperature0=ROOM_TEMP,
+                            pp_guess=None, ang_signal0=0.01, quiet=True, look_along_polling=True) -> list:
+        setups = self._find_crystal_setup(Mode.CRYSTAL_PERIOD, lam_pump, lam_signal, pol_mode, temperature0, pp_guess,
+                                          ang_signal0, quiet, look_along_polling)
         return setups
 
-    def findCrystalTemperature(self, lam_pump, lam_signal, PolMode, PPguess=None, T0=ROOM_TEMP, angSignal0=0.01,
-                               quiet=True, LookAlongPolling=True):
-        setups = self._findCrystalSetup(Mode.Temperature, lam_pump, lam_signal, PolMode, T0, PPguess, angSignal0, quiet,
-                                        LookAlongPolling)
+    def find_crystal_temperature(self, lam_pump: float, lam_signal: float, pol_mode: OpoPol, pp_guess=None,
+                                 temperature0=ROOM_TEMP, ang_signal0=0.01, quiet=True, look_along_polling=True) -> list:
+        setups = self._find_crystal_setup(Mode.Temperature, lam_pump, lam_signal, pol_mode, temperature0, pp_guess,
+                                          ang_signal0, quiet, look_along_polling)
         return setups
 
     ####################################################################################################################
     #                       OPO METHODS: Find setup for a colinear OPO
     ####################################################################################################################
 
-    def _findPeriod(self, speedCom, lam_pump, theta_pump, phi_pump, lam_signal, T0):
-        phi_signal = 0
+    def _find_period(self, speeds: np.array, pump_beam: BeamParams, lam_signal: float,
+                     temperature0: float) -> np.array:
 
-        def findPeriod(x):
+        def find_period_length(x):
             self._crystal_period = x
-            return np.linalg.norm(
-                self.deltak0vec(speedCom, lam_pump, theta_pump, phi_pump, lam_signal, 1e-12, phi_signal, T0))
+            signal_beam = BeamParams(wavelength=lam_signal, theta=1e-12, phi=0)
+            dk0 = self.deltak0vec(speeds, pump_beam, signal_beam, temperature0)
+            return np.linalg.norm(dk0)
 
-        sol = minimize_scalar(findPeriod, bounds=(self._MIN_PERIOD, self._MAX_PERIOD), method='bounded')
+        sol = minimize_scalar(find_period_length, bounds=(self._MIN_PERIOD, self._MAX_PERIOD), method='bounded')
         if np.isnan(sol.fun):
             raise ResultIsNaNError()
         elif sol.fun > self._MAX_WAVE_MISMATCH:
             raise WaveVectorMismatchTooBig(sol.fun)
         period = sol.x
         deltak = sol.fun
-        return np.array([T0, period, deltak, sol.success])
+        return np.array([temperature0, period, deltak, sol.success])
 
-    def _findTemp(self, speedCom, lam_pump, theta_pump, phi_pump, lam_signal, PP0):
-        phi_signal = 0
-        if PP0 > 0:
-            self._crystal_period = PP0
+    def _find_temperature(self, speeds: np.array, pump_beam: BeamParams, lam_signal, pp0) -> np.array:
+        if pp0 > 0:
+            self._crystal_period = pp0
 
-        def findTemp(x):
-            T = x
-            return np.linalg.norm(
-                self.deltak0vec(speedCom, lam_pump, theta_pump, phi_pump, lam_signal, 1e-12, phi_signal, T))
+        def find_temp(x):
+            _temperature = x
+            signal_beam = BeamParams(wavelength=lam_signal, theta=1e-12, phi=0)
+            dk0 = self.deltak0vec(speeds, pump_beam, signal_beam, _temperature)
+            return np.linalg.norm(dk0)
 
-        sol = minimize_scalar(findTemp, bounds=(self._MIN_TEMPERATURE, self._MAX_TEMPERATURE), method='bounded')
+        sol = minimize_scalar(find_temp, bounds=(self._MIN_TEMPERATURE, self._MAX_TEMPERATURE), method='bounded')
         if np.isnan(sol.fun):
             raise ResultIsNaNError()
         elif sol.fun > self._MAX_WAVE_MISMATCH:
             raise WaveVectorMismatchTooBig(sol.fun)
-        T = sol.x
+        temperature = sol.x
         deltak = sol.fun
-        PP0 = self._crystal_period
-        return np.array([T, PP0, deltak, sol.success])
+        pp0 = self._crystal_period
+        return np.array([temperature, pp0, deltak, sol.success])
 
-    def _findOptimum(self, speedCom, lam_pump, theta_pump, phi_pump, lam_signal, T0, PP0):
-        phi_signal = 0
-        if PP0 < 0:
-            PP0 = self._crystal_period
+    def _find_optimum(self, speeds: np.array, pump_beam: BeamParams, lam_signal: float,
+                      temperature0, pp0) -> np.array:
+        if pp0 < 0:
+            pp0 = self._crystal_period
 
-        def findTemp(x):
-            T = x[0]
+        def find_temp(x):
+            _temperature = x[0]
             self._crystal_period = x[1]
-            return np.linalg.norm(
-                self.deltak0vec(speedCom, lam_pump, theta_pump, phi_pump, lam_signal, 1e-12, phi_signal, T))
+            signal_beam = BeamParams(wavelength=lam_signal, theta=1e-12, phi=0)
+            dk0 = self.deltak0vec(speeds, pump_beam, signal_beam, _temperature)
+            return np.linalg.norm(dk0)
 
-        sol = minimize(findTemp, np.array([T0, PP0]),
+        sol = minimize(find_temp, np.array([temperature0, pp0]),
                        bounds=((self._MIN_TEMPERATURE, self._MAX_TEMPERATURE), (self._MIN_PERIOD, self._MAX_PERIOD)))
         if np.isnan(sol.fun):
             raise ResultIsNaNError()
         elif sol.fun > self._MAX_WAVE_MISMATCH:
             raise WaveVectorMismatchTooBig(sol.fun)
-        T = sol.x[0]
+        temperature = sol.x[0]
         deltak = sol.fun
-        PP0 = self._crystal_period
-        return np.array([T, PP0, deltak, sol.success])
+        pp0 = self._crystal_period
+        return np.array([temperature, pp0, deltak, sol.success])
 
-    def findCollinearOPO(self, mode, lam_pump, lam_signal, PolMode, X0=None, quiet=True, LookAlongPolling=True):
+    def find_collinear_opo(self, mode, lam_pump, lam_signal, pol_mode, x0=None, quiet=True, look_along_polling=True):
         temp = self._crystal_period
         print('findCollinearOPO: starting search...')
         setups = []
         theta = np.arccos(self._pp_vec[2])
         phi = np.arccos(self._pp_vec[0] / sin(theta))
-        crystalDir = [theta, phi]
-        if LookAlongPolling:
-            pumpDirs = [crystalDir]
+        crystal_dir = [theta, phi]
+        if look_along_polling:
+            pump_dirs = [crystal_dir]
         else:
-            pumpDirs = [[0, 0], [np.pi / 2, 0], [np.pi / 2, np.pi / 2]]
-        Crystalsign = self._pp_sign
-        for direction in pumpDirs:
-            if direction == crystalDir:
+            pump_dirs = [[0, 0], [np.pi / 2, 0], [np.pi / 2, np.pi / 2]]
+        crystal_sign = self._pp_sign
+        for direction in pump_dirs:
+            if direction == crystal_dir:
                 signs = [1, -1]
             else:
                 signs = [1]
-            [theta_pump, phi_pump] = direction
+            pump_beam = BeamParams(wavelength=lam_pump, theta=direction[0], phi=direction[1])
             for sign in signs:
                 self._pp_sign = sign
-                for pump_speed in Speeds:
-                    for signal_speed in Speeds:
-                        if PolMode == OpoPol.HETERO:
-                            idlerSpeed = Speeds((signal_speed.value + 1) % 2)
-                        if PolMode == OpoPol.HOMO:
-                            idlerSpeed = signal_speed
-                        speedCom = np.array([pump_speed, signal_speed, idlerSpeed])
-                        self._crystal_period = temp
-                        try:
-                            if mode == Mode.Temperature:
-                                if X0 is not None:
-                                    PP0 = -1
-                                else:
-                                    PP0 = X0
-                                [T, period, deltak, issuccess] = self._findTemp(speedCom, lam_pump, theta_pump,
-                                                                                phi_pump,
-                                                                                lam_signal, PP0)
-                            elif mode == Mode.CRYSTAL_PERIOD:
-                                if X0 is not None:
-                                    T0 = ROOM_TEMP
-                                else:
-                                    T0 = X0
-                                [T, period, deltak, issuccess] = self._findPeriod(speedCom, lam_pump, theta_pump,
-                                                                                  phi_pump, lam_signal, T0)
-                            elif mode == Mode.TempPeriod:
-                                if X0 is not None:
-                                    T0 = ROOM_TEMP
-                                    PP0 = -1
-                                else:
-                                    [T0, PP0] = X0
-                                [T, period, deltak, issuccess] = self._findOptimum(speedCom, lam_pump, theta_pump,
-                                                                                   phi_pump, lam_signal, T0, PP0)
+                for speed_com in product(Speeds, repeat=2):
+                    pump_speed = speed_com[0]
+                    signal_speed = speed_com[1]
+                    if pol_mode == OpoPol.HETERO:
+                        idler_speed = Speeds((signal_speed.value + 1) % 2)
+                    elif pol_mode == OpoPol.HOMO:
+                        idler_speed = signal_speed
+                    else:
+                        raise TypeError('Incorrect polarization mode.')
+                    speeds = np.array([pump_speed, signal_speed, idler_speed])
+                    self._crystal_period = temp
+                    try:
+                        if mode == Mode.Temperature:
+                            if x0 is not None:
+                                pp0 = -1
                             else:
-                                raise Exception('Incorrect mode')
-                            lamIdler = 1 / (1 / lam_pump - 1 / lam_signal)
-                            instance = OpoSetup(issuccess, deltak, lam_pump, lam_signal, lamIdler, theta_pump, phi_pump,
-                                                T,
-                                                period, Sign.sign, pump_speed, idlerSpeed, signal_speed, 0, 0)
-                            instance.disp()
-                            setups.append(instance)
-                        except Exception as exc:
-                            if not quiet:
-                                print(exc.args)
-                        finally:
-                            self._crystal_period = temp
-        self._pp_sign = Crystalsign
+                                pp0 = x0
+                            [temperature, period, deltak, issuccess] = self._find_temperature(speeds, pump_beam,
+                                                                                              lam_signal, pp0)
+                        elif mode == Mode.CRYSTAL_PERIOD:
+                            if x0 is not None:
+                                temperature0 = ROOM_TEMP
+                            else:
+                                temperature0 = x0
+                            [temperature, period, deltak, issuccess] = self._find_period(speeds, pump_beam, lam_signal,
+                                                                                         temperature0)
+                        elif mode == Mode.TempPeriod:
+                            if x0 is not None:
+                                temperature0 = ROOM_TEMP
+                                pp0 = -1
+                            else:
+                                [temperature0, pp0] = x0
+                            [temperature, period, deltak, issuccess] = self._find_optimum(speeds, pump_beam, lam_signal,
+                                                                                          temperature0, pp0)
+                        else:
+                            raise Exception('Incorrect mode')
+                        lam_idler = 1 / (1 / lam_pump - 1 / lam_signal)
+                        signal_beam = BeamParams(wavelength=lam_signal, theta=1e-12, phi=0)
+                        idler_beam = BeamParams(wavelength=lam_idler, theta=1e-12, phi=np.pi)
+                        instance = OpoSetup(issuccess, deltak, pump_beam, signal_beam, idler_beam, temperature, period,
+                                            Sign.sign, pump_speed, idler_speed, signal_speed)
+                        instance.display()
+                        setups.append(instance)
+                    except Exception as exc:
+                        if not quiet:
+                            print(exc.args)
+                    finally:
+                        self._crystal_period = temp
+        self._pp_sign = crystal_sign
         print('findCollinearOPO: search finished. ' + str(len(setups)) + ' setups found. \n')
         return setups

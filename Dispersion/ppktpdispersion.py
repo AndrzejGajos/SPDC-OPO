@@ -31,5 +31,3 @@ class PPKTPMisiaszek(CrystalDispersion):
 
     def nz(self, wavelength: float, temperature: float) -> float:
         return self._ns(wavelength, temperature, self._SELLMEIER_COEFF["zcoeff"], self._TEMP_COEFF["tempZ"])
-
-# TODO tests -> __name__ == main

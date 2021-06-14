@@ -54,12 +54,12 @@ speeds = (Speeds.FAST, Speeds.SLOW, Speeds.SLOW)
 PPcrystal.plotTempOPO(speeds, 40, 20, lamPump, thetaPump, phiPump)
 ## It is easy to see that there is very strong dependence on temperature. Even few degrees of deviation from ideal (around 25) temperature can potentially lead to spectrally distinguishable beams.
 ## We can calculate perfect temerature with following function:
-list = PPcrystal.findCollinearOPO(Mode.Temperature, 0.775, 1.550)
+list = PPcrystal.find_collinear_opo(Mode.Temperature, 0.775, 1.550, )
 
 ##Not needed in above examples:
-list = PPcrystal.findCollinearOPO(Mode.CrystalPeriod, 0.775, 1.550, 30)
+list = PPcrystal.find_collinear_opo(Mode.CrystalPeriod, 0.775, 1.550, 30)
 
 
 quit()
 
-list = PPcrystal.findCrystalTemperature(0.775, 1.550, OpoPol.HETERO)
+list = PPcrystal.find_crystal_temperature(0.775, 1.550, OpoPol.HETERO)

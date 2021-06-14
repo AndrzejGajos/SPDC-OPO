@@ -4,6 +4,7 @@ from .oposetup import Sign
 
 class PPLNgayer2008(CrystalDispersion):
     """5% MgO-doped congruent LiNbO3 (CLN)
+    DOI: 10.1007/s00340-008-2998-2
     """
     _SELLMEIER_COEFF = {"xcoeff": [5.653, 0.1185, 0.2091, 89.61, 10.85, 0.0197],
                        "ycoeff": [5.653, 0.1185, 0.2091, 89.61, 10.85, 0.0197],
@@ -27,13 +28,15 @@ class PPLNgayer2008(CrystalDispersion):
                          - sell_coeff[5] * lam2) ** 0.5
         return dispersion
 
-    def nx(self, wavelength: float, temperature: float) -> float:
-        return self._ns(wavelength, temperature, self._SELLMEIER_COEFF["xcoeff"], self._TEMP_COEFF["tempX"])
+    @classmethod
+    def nx(cls, wavelength: float, temperature: float) -> float:
+        return cls._ns(wavelength, temperature, cls._SELLMEIER_COEFF["xcoeff"], cls._TEMP_COEFF["tempX"])
 
-    def ny(self, wavelength: float, temperature: float) -> float:
-        return self._ns(wavelength, temperature, self._SELLMEIER_COEFF["ycoeff"], self._TEMP_COEFF["tempY"])
+    @classmethod
+    def ny(cls, wavelength: float, temperature: float) -> float:
+        return cls._ns(wavelength, temperature, cls._SELLMEIER_COEFF["ycoeff"], cls._TEMP_COEFF["tempY"])
 
-    def nz(self, wavelength: float, temperature: float) -> float:
-        return self._ns(wavelength, temperature, self._SELLMEIER_COEFF["zcoeff"], self._TEMP_COEFF["tempZ"])
+    @classmethod
+    def nz(cls, wavelength: float, temperature: float) -> float:
+        return cls._ns(wavelength, temperature, cls._SELLMEIER_COEFF["zcoeff"], cls._TEMP_COEFF["tempZ"])
 
-# TODO tests -> __name__ == main
