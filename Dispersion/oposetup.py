@@ -4,38 +4,59 @@ from typing import NamedTuple
 
 
 class Speeds(Enum):
+    """Polarization modes inside the crystal"""
     SLOW = 0
     FAST = 1
 
 
 class RangeLimits(NamedTuple):
+    """Maximal and minimal value of some range"""
     max: float
     min: float
 
 
 class BeamParams(NamedTuple):
+    """Beam parameters
+
+    Parameters
+    ----------
+    wavelength : float
+        Beam wavelength in micrometers
+    theta: float
+        Opening angle of beam in radians. Usually specified in frame of reference of pumping beam.
+    phi: float
+        Azimuthal angle of beam in radians. Usually specified in frame of reference of pumping beam.
+    """
     wavelength: float
     theta: float
     phi: float
 
 
 class OpoSpeeds(NamedTuple):
+    """Polarization configuration of OPO"""
     pump: Speeds
     idler: Speeds
     signal: Speeds
 
 
 class SHGspeeds(NamedTuple):
+    """Polarization configuration of SHG"""
     pump: Speeds
     shg: Speeds
 
 
 class OpoPol(Enum):
+    """Two possible polarization configurations of OPO.
+
+    HOMO refers to situation when idler and signal have the same
+    polarization (e.g {pump, signal, idler} -> {SLOW, FAST, FAST}). HETERO refers to situation when these polarization
+    are different (e.g {pump, signal, idler} -> {SLOW, FAST, SLOW})."""
     HOMO = 0
     HETERO = 1
 
 
 class Mode(Enum):
+    """Search modes for finding OPO configurations."""
     TEMPERATURE = 1
     WAVELENGTH = 2
     CRYSTAL_PERIOD = 3
@@ -43,15 +64,40 @@ class Mode(Enum):
 
 
 class Sign(Enum):
+    """Quasi wavevector sign."""
     MINUS = -1
     PLUS = 1
 
 
 class OpoSetup:
+    """Contains all information about beams and crystal for a given OPO.
+
+    Instance of OpoSetup is a result of minimum finding of phase mismatch (delta_k).
+    """
 
     def __init__(self, issuccess: bool, delta_k: float, pump_beam: BeamParams, signal_beam: BeamParams,
                  idler_beam: BeamParams, temperature: float, crystal_period: float, pseudo_vector_sign: Sign,
-                 pol_pump: Speeds, pol_idler: Speeds, pol_signal: Speeds) -> None:
+                 pp_direction: np.array, pol_pump: Speeds, pol_idler: Speeds, pol_signal: Speeds) -> None:
+        """
+        Parameters
+        ----------
+        issuccess : bool
+            It states if minimization ended up in success or failure.
+        delta_k : float
+            Value of phase mismatch and therefore efficiency of OPO process. Units [rad/micrometers]
+        pump_beam, signal_beam, idler_beam : BeamParams
+            Parameters of beams.
+        temperature : float
+            Crystal temperature in Celsius.
+        crystal_period : float
+            Crystal period in micrometers
+        pseudo_vector_sign : Sign
+            Sign of quasi pseudovector.
+        pp_direction : np.array
+            Periodic polling direction. It should be a unit vector.
+        pol_pump, pol_idler, pol_signal: Speeds
+            Beams polarization in crystal frame of reference.
+        """
         self._issuccess = issuccess
         self._delta_k = delta_k
         self._lam_pump = pump_beam.wavelength
@@ -62,6 +108,7 @@ class OpoSetup:
         self._temperature = temperature
         self._crystal_period = crystal_period
         self._pseudo_vector_sign = pseudo_vector_sign
+        self._pp_dir = np.copy(pp_direction)
         self._pol_pump = pol_pump
         self._pol_idler = pol_idler
         self._pol_signal = pol_signal
@@ -106,6 +153,10 @@ class OpoSetup:
     @property
     def sign(self) -> Sign:
         return self._pseudo_vector_sign
+
+    @property
+    def pp_dir(self) -> np.array:
+        return np.copy(self._pp_dir)
 
     @property
     def pol_pump(self) -> Speeds:

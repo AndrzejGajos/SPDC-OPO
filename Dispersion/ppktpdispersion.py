@@ -3,14 +3,15 @@ from .oposetup import Sign
 
 
 class PPKTPMisiaszek(CrystalDispersion):
+    """DOI: 10.1088/2399-6528/aaccac"""
     _SELLMEIER_COEFF = {"xcoeff": [3.29100, 0.04140, 0.03978, 9.35522, 31.45571],
-                       "ycoeff": [3.45018, 0.04341, 0.04597, 16.98825, 39.43799],
-                       "zcoeff": [4.59423, 0.06272, 0.04814, 110.80672, 86.12171]}
+                        "ycoeff": [3.45018, 0.04341, 0.04597, 16.98825, 39.43799],
+                        "zcoeff": [4.59423, 0.06272, 0.04814, 110.80672, 86.12171]}
 
     _TEMP_COEFF = {"thermal_expansion": {"alpha": 6.7 * 10 ** -6, "beta": 1.1 * 10 ** -8, "room_temperature": 25},
-                  "tempX": [0.1717, -0.5353, 0.8416, 0.1627, 20, 10 ** -5],
-                  "tempY": [0.1997, -0.4063, 0.5154, 0.5425, 20, 10 ** -5],
-                  "tempZ": [0.9221, -2.922, 3.6677, -0.1897, 20, 10 ** -5]}
+                   "tempX": [0.1717, -0.5353, 0.8416, 0.1627, 20, 10 ** -5],
+                   "tempY": [0.1997, -0.4063, 0.5154, 0.5425, 20, 10 ** -5],
+                   "tempZ": [0.9221, -2.922, 3.6677, -0.1897, 20, 10 ** -5]}
 
     def __init__(self, crystal_period: float, pp_vec: list, pp_sign=Sign.MINUS) -> None:
         super().__init__(crystal_period, pp_vec, pp_sign)
