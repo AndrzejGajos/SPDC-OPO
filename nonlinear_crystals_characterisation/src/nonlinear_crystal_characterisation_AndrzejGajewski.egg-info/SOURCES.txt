@@ -1,0 +1,13 @@
+LICENSE
+README.md
+pyproject.toml
+setup.cfg
+src/nonlinear_crystal_characterisation_AndrzejGajewski.egg-info/PKG-INFO
+src/nonlinear_crystal_characterisation_AndrzejGajewski.egg-info/SOURCES.txt
+src/nonlinear_crystal_characterisation_AndrzejGajewski.egg-info/dependency_links.txt
+src/nonlinear_crystal_characterisation_AndrzejGajewski.egg-info/top_level.txt
+src/nonlinear_crystals_characterisation/__init__.py
+src/nonlinear_crystals_characterisation/crystaldispersion.py
+src/nonlinear_crystals_characterisation/oposetup.py
+src/nonlinear_crystals_characterisation/ppktpdispersion.py
+src/nonlinear_crystals_characterisation/pplndispersion.py
