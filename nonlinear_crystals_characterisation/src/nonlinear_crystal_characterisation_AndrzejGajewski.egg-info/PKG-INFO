@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: nonlinear-crystal-characterisation-AndrzejGajewski
-Version: 0.0.1
+Version: 0.0.2
 Summary: Package for characterisation (SHG, OPO/SPDC) of nonlinear crystals.
 Home-page: https://github.com/AndrzejGajos/SPDC-OPO
 Author: Andrzej Gajewski
