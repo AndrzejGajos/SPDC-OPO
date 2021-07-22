@@ -961,18 +961,18 @@ class CrystalDispersion(metaclass=ABCMeta):
             else:
                 signs = [1]
             pump_beam = BeamParams(wavelength=lam_pump, theta=direction[0], phi=direction[1])
-            for sign in signs:
-                self._pp_sign = Sign(sign)
-                for speed_com in product(Speeds, repeat=2):
-                    pump_speed = speed_com[0]
-                    signal_speed = speed_com[1]
-                    if pol_mode == OpoPol.HETERO:
-                        idler_speed = Speeds((signal_speed.value + 1) % 2)
-                    elif pol_mode == OpoPol.HOMO:
-                        idler_speed = signal_speed
-                    else:
-                        raise TypeError('Incorrect polarization mode.')
-                    speeds = np.array([pump_speed, signal_speed, idler_speed])
+            for speed_com in product(Speeds, repeat=2):
+                pump_speed = speed_com[0]
+                signal_speed = speed_com[1]
+                if pol_mode == OpoPol.HETERO:
+                    idler_speed = Speeds((signal_speed.value + 1) % 2)
+                elif pol_mode == OpoPol.HOMO:
+                    idler_speed = signal_speed
+                else:
+                    raise TypeError('Incorrect polarization mode.')
+                speeds = np.array([pump_speed, signal_speed, idler_speed])
+                for sign in signs:
+                    self._pp_sign = Sign(sign)
                     try:
                         if mode == Mode.TEMPERATURE:
                             if x0 is None:
